@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "_doc": "Ambiguity classes for overloaded language conditioning. A class groups tasks that are simultaneously executable from one scene state, so a low-specificity (L0) instruction is genuinely multimodal rather than merely vague. L0 verbs never cross primitive boundaries (no 'grasp' in the lift class) and never name a color. 'tasks' drives training labels and class-level success scoring -- the CALVIN oracle only reports tasks actually completed, so scoring the full member list can never falsely credit an unreachable one. 'eval_condition'/'feasible_modes' describe a synthetic scene in which as many members as possible are simultaneously executable; use them for the entropy ceiling and for reset when not replaying dataset scenes.",
+  "classes": {
+    "lift_block": {
+      "tasks": [
+        "lift_red_block_table",
+        "lift_blue_block_table",
+        "lift_pink_block_table",
+        "lift_red_block_slider",
+        "lift_blue_block_slider",
+        "lift_pink_block_slider",
+        "lift_red_block_drawer",
+        "lift_blue_block_drawer",
+        "lift_pink_block_drawer"
+      ],
+      "ambiguous": [
+        "pick up the block",
+        "lift the block",
+        "pick up a block"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "closed",
+        "lightbulb": 0,
+        "led": 0,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "lift_red_block_table",
+        "lift_blue_block_table",
+        "lift_pink_block_table"
+      ],
+      "note": "Only the three table lifts are reachable: TASK_INITIAL_CONDITIONS has no drawer placement value (table/slider_left/slider_right only), and a slider condition can hold at most one block."
+    },
+    "push_block": {
+      "tasks": [
+        "push_red_block_left",
+        "push_blue_block_left",
+        "push_pink_block_left",
+        "push_red_block_right",
+        "push_blue_block_right",
+        "push_pink_block_right"
+      ],
+      "ambiguous": [
+        "push the block",
+        "slide the block",
+        "push a block"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "closed",
+        "lightbulb": 0,
+        "led": 0,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "push_red_block_left",
+        "push_blue_block_left",
+        "push_pink_block_left",
+        "push_red_block_right",
+        "push_blue_block_right",
+        "push_pink_block_right"
+      ],
+      "note": "All six members share byte-identical initial conditions; genuinely 6-way multimodal."
+    },
+    "rotate_block": {
+      "tasks": [
+        "rotate_red_block_left",
+        "rotate_blue_block_left",
+        "rotate_pink_block_left",
+        "rotate_red_block_right",
+        "rotate_blue_block_right",
+        "rotate_pink_block_right"
+      ],
+      "ambiguous": [
+        "rotate the block",
+        "turn the block"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "closed",
+        "lightbulb": 0,
+        "led": 0,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "rotate_red_block_left",
+        "rotate_blue_block_left",
+        "rotate_pink_block_left",
+        "rotate_red_block_right",
+        "rotate_blue_block_right",
+        "rotate_pink_block_right"
+      ],
+      "note": "All six members share byte-identical initial conditions; genuinely 6-way multimodal."
+    },
+    "place_block": {
+      "tasks": [
+        "place_in_drawer",
+        "place_in_slider"
+      ],
+      "ambiguous": [
+        "put the block away",
+        "place the block",
+        "put down the block"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "open",
+        "lightbulb": 0,
+        "led": 0,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "place_in_drawer",
+        "place_in_slider"
+      ],
+      "note": "Both members require a block already in the gripper, which TASK_INITIAL_CONDITIONS does not model (see task_configs.py:275). Class-level numbers here are only meaningful once that limitation is fixed."
+    },
+    "light_on": {
+      "tasks": [
+        "turn_on_led",
+        "turn_on_lightbulb"
+      ],
+      "ambiguous": [
+        "turn on the light",
+        "switch on the light"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "closed",
+        "lightbulb": 0,
+        "led": 0,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "turn_on_led",
+        "turn_on_lightbulb"
+      ],
+      "note": "Both start off under the canonical condition; genuinely 2-way multimodal."
+    },
+    "light_off": {
+      "tasks": [
+        "turn_off_led",
+        "turn_off_lightbulb"
+      ],
+      "ambiguous": [
+        "turn off the light",
+        "switch off the light"
+      ],
+      "eval_condition": {
+        "slider": "right",
+        "drawer": "closed",
+        "lightbulb": 1,
+        "led": 1,
+        "red_block": "table",
+        "blue_block": "table",
+        "pink_block": "table"
+      },
+      "feasible_modes": [
+        "turn_off_led",
+        "turn_off_lightbulb"
+      ],
+      "note": "Needs a shared both-on condition. The per-task conditions turn on only one (turn_off_led is led:1/bulb:0, turn_off_lightbulb is led:0/bulb:1), which would make each state-exclusive."
+    }
+  },
+  "specific_only": {
+    "open_drawer": "Starts closed; close_drawer starts open. Mutually exclusive by state.",
+    "close_drawer": "Starts open; open_drawer starts closed. Mutually exclusive by state.",
+    "move_slider_left": "Starts with slider at 'right'; only one direction is ever executable.",
+    "move_slider_right": "Starts with slider at 'left'; only one direction is ever executable.",
+    "push_into_drawer": "Starts with the block ungrasped and blue/pink in the slider, unlike both place_in_* tasks.",
+    "stack_block": "No sibling task; an ambiguous form would just be a paraphrase.",
+    "unstack_block": "No sibling task; an ambiguous form would just be a paraphrase."
+  }
+}

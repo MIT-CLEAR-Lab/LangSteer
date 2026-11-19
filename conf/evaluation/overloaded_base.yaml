@@ -1,0 +1,7 @@
+extends: calvin_tasks
+condition_name: "3DDA base (overloaded checkpoint)"
+policy_config: diffuser_actor_overloaded
+policy:
+  ckpt_path: ${oc.env:OVERLOADED_CHECKPOINT,checkpoints/overloaded/last.pth}
+  mask_language: false
+steering: none

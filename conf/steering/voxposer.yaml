@@ -1,0 +1,188 @@
+name: voxposer
+
+# Steering instruction override (null = use env.task_description or top-level instruction)
+# Set this to use a DIFFERENT instruction for value map generation than the policy sees.
+instruction: null
+
+# Guidance parameters
+guidance_strength: 1
+
+# What position strength 1 means in world units, for every policy. The DDPM branch
+# moves the clean position estimate by strength * ramp * (half-range of the 3DDA
+# position normalisation)^2 * dC/dp, so a unit cost gradient (1 per metre) moves a
+# waypoint by (half-range)^2 metres per unit of the timestep ramp. These are the
+# 3DDA bounds (policy.gripper_loc_bounds of conf/policy/diffuser_actor.yaml);
+# policies with other action spaces (pi0.5) read them here to apply the same move.
+world_step_bounds: [[-0.3021, -0.2569, -0.2156], [0.3613, 0.3377, 0.1837]]
+
+# Settings that describe a stretch of time are given in control steps, and are
+# converted with the number of control steps a policy executes per call (20 for
+# 3DDA, 5 for pi0.5), so they mean the same duration for every policy.
+steps_per_policy_call: ${policy.executed_steps}
+# Length, in control steps, over which horizon ramps (rot_horizon_alpha_max) are
+# defined: the 3DDA trajectory length. A shorter-horizon policy reads the first
+# part of the same ramp.
+reference_horizon: 20
+
+# Flow policies (pi0.5): how the flow sampler applies the guidance. These are the only
+# policy-specific steering settings; docs/guides/pi05_steering.md explains each one.
+flow_gain: 4.0                # multiplies guidance_strength for the position pull on the early steps
+flow_time_floor: 0.5          # early-step pull on Euler steps that start above this time (0: every step)
+flow_rotation_time_floor: 0.0 # the same window for the rotation term (0: every step)
+flow_rotation_when: holding   # always | holding (gripper width inside the grasp window)
+flow_rotation_yield_deg: 0.0  # rotation off while the plan turns this far against the target (0: never)
+flow_rotation_gain: 25.0      # multiplies guidance_strength_rot in the flow sampler
+flow_step_bound: result       # change: a step is changed by at most one controller step | result: the guided step is at most one
+flow_override_gain: 8.0       # pull on every step, weighted by how little the policy's own path heads to the stage target (0: off)
+flow_override_progress_cm: 2.0  # a predicted path that advances this far toward the stage target is left alone
+flow_override_reach_cm: 5.0   # ... as is a predicted path that comes this close to it (0: off)
+flow_override_when: approach  # approach: only in grasp stages, before the gripper closes on an object | always
+flow_override_near_cm: 4.0    # the override is zero within this distance of the stage target ...
+flow_override_full_cm: 12.0   # ... and full beyond this one
+
+horizon: ${policy.pred_horizon}
+# Must be 'epsilon' for DiffuserActor (which uses epsilon prediction)
+prediction_type: epsilon
+device: ${policy.device}
+
+# Only apply guidance for timesteps <= this value.
+# Steps above this threshold are high-noise; Tweedie x_0 predictions are unreliable there.
+# E.g. with 100 total steps, set to 50 to guide only the lower-noise half.
+start_guidance_timestep: 50
+
+# Timestep scaling (soft ramp within the guided window)
+use_timestep_scaling: true
+min_timestep_scale: 0.1
+
+# Adaptive guidance decay — fades guidance as the EE enters the affordance
+# basin so the policy can drive through (e.g. complete the push motion past
+# the basin centroid). With both modes disabled, guidance is not decayed.
+#
+# A. Distance-decay: linear ramp on ||ee - stage_target||.
+#    d ≥ distance_full → scale = 1.0 (full guidance, EE far)
+#    d ≤ distance_near → scale = distance_floor (EE in basin, near full release)
+use_distance_scaling: true
+distance_full: 0.12   # m: above this, full guidance
+distance_near: 0.04   # m: below this, guidance reduced to distance_floor
+distance_floor: 0.1  # residual fraction once EE is in basin
+#
+# B. Step-decay: linear ramp on env-steps spent in the current stage. Catches
+#    cases where the basin centroid is offset from the contact point and the
+#    EE never gets close enough to trigger distance decay.
+use_step_scaling: false
+step_full: 0          # full guidance for the first `step_full` env steps
+step_decay: 80        # ramp length (env steps) from 1.0 down to step_floor
+step_floor: 0.05
+
+# Rotation guidance — opt-in per stage. When a composer stage emits a 5-tuple
+# `(aff_fn, avoid_fn, rot_target, mode, primitive)` with rot_target != None,
+# the steering module nudges the predicted wrist rotation toward the target
+# via Tweedie's formula in 6D rotation space. All knobs below are no-ops on
+# stages without a rotation target, so existing rollouts behave identically.
+guidance_strength_rot: 2.0  # 0.4 / 1.0 / 2.0 gave 102 / 119 / 134 of 180 rotate successes; 4.0 was worse at P4
+start_guidance_timestep_rot: ${.start_guidance_timestep}
+# Alignment-decay: shrink rotation guidance as the predicted rotation aligns
+# with the target (measured by Frobenius distance ||R_pred − R_target||_F,
+# bounded ≤ 2*sqrt(2) ≈ 2.83). 0.5 ≈ 30°, 0.1 ≈ 6°.
+use_rot_alignment_scaling: true
+rot_align_full: 0.5
+rot_align_near: 0.1
+rot_align_floor: 0.05
+# Per-horizon SLERP fraction range for rotation guidance. The rotation pull
+# computes a per-horizon target as SLERP(R_pred_h, R_target, alpha_h) along
+# the SO(3) geodesic, with alpha_h ramping quadratically from
+# `rot_horizon_floor` (h=0) up to `rot_horizon_alpha_max` (h=H-1).
+#
+# `rot_horizon_alpha_max` is the most important knob — it controls how far
+# the predicted trajectory's endpoint reaches along the geodesic per
+# policy call:
+#   1.0 = "complete the full rotation in this trajectory" — but a 16-step
+#     waypoint sweep through 90° is much faster than the training
+#     distribution, so the IK can't track it smoothly (wrist pitches
+#     between waypoints).
+#   0.3 = "advance ~30% of the remaining rotation per trajectory" — closer
+#     to demo motion speed; convergence accumulates over many env steps.
+# The floor keeps a small pull on h=0 so the trajectory starts rotating
+# immediately rather than holding pose for one waypoint.
+rot_horizon_floor: 0.0
+rot_horizon_alpha_max: 0.6
+# Quaternion-hemisphere fix in the per-horizon SLERP. When true (default),
+# q_target is flipped to share q_pred's hemisphere so SLERP takes the short
+# way in quaternion space. When false, the sign is left unchanged, which lets
+# the steering pull the prediction across the antipodal boundary.
+rot_hemisphere_fix: true
+
+# DiffuserActor position normalization bounds (gripper_loc_bounds).
+# These are in gripper-relative space (same as policy.gripper_loc_bounds).
+# Required for correct world-space denormalization of predicted trajectories.
+gripper_loc_bounds: ${policy.gripper_loc_bounds}
+relative: ${policy.relative}
+
+# Multi-stage: proximity threshold (meters) for advancing to the next stage.
+# When the EE is within this distance of the current stage's affordance target,
+# the steering module switches to the next stage's cost map.
+stage_proximity_threshold: 0.1
+
+# Grasp-completion gate. For stages with primitive='grasp', proximity alone is
+# not enough — the gripper must also have settled around an object before the
+# steering advances to the next stage (otherwise lift/place launches around an
+# empty gripper while the policy is still mid-attempt).
+#
+# A grasp counts as "complete" when the last `grasp_stability_window` gripper
+# widths all fall in (`grasp_min_width`, `grasp_max_width`) — lower bound
+# rejects "closed on nothing" (width≈0), upper bound rejects "still fully open
+# hovering near object" (Franka opens to ~0.08m) — and their spread is under
+# `grasp_stability_eps` (rejects "still closing" frames). Defaults tuned for
+# CALVIN's Franka gripper.
+grasp_min_width: 0.02         # m: below this → closed on nothing
+grasp_max_width: 0.07         # m: above this → gripper still open
+grasp_stability_window: 1     # consecutive steps the width must be stable
+grasp_stability_eps: 0.002    # m: max spread allowed across the window
+
+# Every stage tuple the composer emits names its motion primitive (from
+# steering/stage_spec.py's PRIMITIVE_VOCAB). The steering reads it per stage for
+# the grasp gate above and the surface target of place/push/pull stages; the
+# policy is not conditioned on it.
+
+# Dynamic costmap refresh: re-evaluate value maps with current scene state.
+# Uses cached LLM code with updated object positions (no new LLM call).
+# Only stages marked 'track' are re-evaluated; 'static' stages are pinned at
+# activation regardless of refresh.
+refresh_costmap: true
+refresh_interval: 1  # refresh every N environment steps
+
+# Last-stage loop-back failure recovery. After `last_stage_dwell_env_steps`
+# control steps at the last stage without the success oracle ending the
+# episode, restart from stage 0 (reusing the composer's already-parsed stages,
+# no new LLM call). Off here; the steered evaluation conditions switch it on.
+loop_back_on_last_stage: false
+last_stage_dwell_env_steps: 80   # control steps at the last stage before reset:
+                                 # 4 policy calls of 3DDA (20 steps each), 16 of
+                                 # pi0.5 (5 steps each). Long enough not to cut
+                                 # short slow tasks like close_drawer, short
+                                 # enough to recover oscillations like
+                                 # lift_red_block_drawer within 360 steps.
+max_loop_backs: 3                # safety cap so a stuck rollout still ends
+
+# Default stage mode for legacy 2-tuple LLM outputs (no 3rd element).
+# 'static' = freeze affordance at first activation (safe — never chases moving
+#   offsets like "15cm to the left of the slider handle").
+# 'track'  = re-evaluate each refresh (correct only for "at object" queries
+#   where the affordance should follow the moving object).
+default_stage_mode: static
+
+# Voxel map settings
+map_size: 100
+
+# LLM settings (provider-agnostic: "anthropic" or "openai")
+llm_provider: openai
+llm_model: gpt-5.4  # gpt-5* models need `max_completion_tokens` and reject server-side `stop`
+                    # sequences; voxposer/lmp.py handles both and truncates at stop markers itself.
+llm_temperature: 0
+llm_max_tokens: 512
+cache_dir: cache/voxposer_llm
+load_cache: true
+
+# Workspace bounds (absolute world coords, meters)
+workspace_bounds_min: [-0.35, -0.60, 0.30]
+workspace_bounds_max: [0.35, 0.15, 0.85]

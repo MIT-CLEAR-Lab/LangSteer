@@ -1,0 +1,46 @@
+# 3D Diffuser Actor Training — Overloaded Language Conditioning
+#
+# Original 3DDA CALVIN recipe (ABC->D, CLIP text features) with one change: each
+# window draws its instruction from a pool instead of carrying a fixed one. With
+# probability `ambiguous_prob` the draw comes from the low-specificity templates of
+# the window's ambiguity class ("pick up the block"); otherwise from the task's full
+# specific paraphrase pool ("lift the red block from the slider"). One ambiguous
+# template therefore gets paired with every trajectory in its class, making
+# p(traj | ambiguous instruction, scene) multimodal by construction.
+#
+# Reuses the standard packaged .dat files unchanged — the packaging stores only an
+# integer annotation_id, so no repackaging or calvin_env replay is needed.
+#
+# Required prerequisite (run once; put the .pkl files in CALVIN_3DA_INSTRUCTIONS_PATH):
+#   python -m training.policies.diffuser_actor.preprocessing.preprocess_overloaded_instructions \
+#     --annotation_path $ANN/training/lang_annotations/auto_lang_ann.npy \
+#     --output $OUT/training_overloaded.pkl
+#   (repeat for the validation split -> validation_overloaded.pkl)
+
+defaults:
+  - diffuser_actor_calvin
+
+# The policy architecture is the standard recipe's (diffuser_actor_calvin.policy).
+
+dataset:
+  # train_path, val_path and instructions_path come from diffuser_actor_calvin
+  # (CALVIN_3DA_DATASET_PATH: the standard auto_lang_ann.npy packaging;
+  # CALVIN_3DA_INSTRUCTIONS_PATH: the directory holding
+  # {training,validation}_overloaded.pkl).
+  # Opt in to {split}_overloaded.pkl. Not auto-detected: the legacy {split}.pkl often
+  # sits in the same directory, and silently preferring the overloaded artifact would
+  # switch other configs from CALVIN's baked-in string to paraphrase sampling.
+  use_overloaded_instructions: true
+  # p(ambiguous | the window's task has an ambiguous tier). The 7 specific-only tasks
+  # always draw specific, so the dataset-wide ambiguous fraction lands near 0.24.
+  ambiguous_prob: 0.3
+  taskvar:
+    - ["A", 0]
+    - ["B", 0]
+    - ["C", 0]
+    - ["D", 0]
+
+train_iters: 600000
+
+checkpoint_dir: "outputs/checkpoints/diffuser_actor_overloaded"
+experiment_name: "diffuser_actor_overloaded_${now:%Y%m%d_%H%M%S}"

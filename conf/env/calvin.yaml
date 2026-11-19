@@ -1,0 +1,40 @@
+# CALVIN Environment Configuration
+
+name: calvin
+
+# Task specification
+task: "open_drawer"  # Task name to look up in language annotations
+
+# Dataset/environment settings
+dataset_path: ${oc.env:CALVIN_DATASET_PATH,data/task_D_D}  # Dataset root containing validation/
+split: "validation"  # Dataset split: "training" or "validation"
+use_gui: false      # Show PyBullet GUI for debugging
+
+# Observation settings
+num_points: 2048    # Number of points in point cloud
+provide_pcd_images: false  # Provide per-pixel PCD images (required for 3D Diffuser Actor)
+
+# Language annotations
+lang_ann_path: ${env.dataset_path}/${env.split}/lang_annotations/auto_lang_ann.npy
+
+# Perturbation override: when both are set, task instructions come from the perturbed
+# JSON at the given axis (P1..P4) instead of auto_lang_ann.npy. Used by the
+# language-perturbation evaluation benchmark; leave as null for default runs.
+perturbed_ann_path: null
+perturbation_axis: null
+
+# Instruction specificity: "specific" uses the full annotation (or the perturbed axis
+# above); "ambiguous" uses the low-specificity L0 template of the task's ambiguity
+# class ("pick up the block"), under which the policy is deliberately multimodal.
+# Specific-only tasks have no L0 and raise rather than silently falling back.
+instruction_level: "specific"
+overloaded_ann_path: overloaded_language_annotations.json
+
+# Episode settings
+max_steps: 360     # Maximum steps per episode
+render_mode: null   # Render mode: null, "rgb_array", or "human"
+done_on_success: true  # End episode when task oracle detects success (set false for multi-stage instructions)
+
+# Task-specific reset
+use_task_initial_condition: true  # Enable task-specific scene state reset (required for proper task evaluation)
+randomize_initial_condition: false  # Sample random starting states from dataset episodes for the task (overrides use_task_initial_condition)

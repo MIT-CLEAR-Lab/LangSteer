@@ -1,0 +1,31 @@
+# pi0.5 (OpenPI), fine-tuned on CALVIN with overloaded language: a websocket client.
+# The JAX model runs in the OpenPI venv behind `python -m pi05_guidance.server`.
+
+name: pi05_guided
+
+# Completion manifest of the served checkpoint. The client hashes it and refuses
+# a server that holds different weights.
+ckpt_path: ${oc.env:PI05_OVERLOADED_CHECKPOINT,checkpoints/pi05_calvin_overloaded/200000/COMPLETED.json}
+device: cuda   # informational; the client does no GPU work
+
+host: 127.0.0.1
+port: 8003
+
+# pi0.5 predicts 10 relative actions; the first `replan_steps` are executed, then
+# it is queried again with a fresh observation.
+action_horizon: 10
+replan_steps: 5
+executed_steps: ${.replan_steps}   # control steps per policy call
+
+# Observation.rgb keys for the two policy cameras (native 200x200 and 84x84).
+static_key: static
+gripper_key: gripper_native
+
+# Optional fixed prompt (null: the instruction from the environment).
+prompt: null
+
+# Read by conf/steering/voxposer.yaml through interpolation. The flow adapter
+# takes its coordinate scales from CALVIN and the checkpoint, not from these.
+pred_horizon: ${.action_horizon}
+gripper_loc_bounds: null
+relative: true

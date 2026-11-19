@@ -1,0 +1,52 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Experiment outputs, checkpoints and caches at the root (directories or symlinks to them)
+/outputs
+/cache
+/checkpoints
+/tmp
+/wandb
+
+# External repos checked out next to the code (anchored: voxposer/prompts/calvin/ is tracked)
+/calvin/
+/3d_diffuser_actor/
+/VoxPoser/
+
+# Configs
+.claude/
+.archive/
+
+# Results and spreadsheets (results live outside the repository)
+*.xlsx
+*.xls
+*.csv
+/results/
+
+# Environment and secret files
+.env
+.env.*
+*.pem
+.netrc
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Editor and OS leftovers
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

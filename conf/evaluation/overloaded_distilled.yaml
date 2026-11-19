@@ -1,0 +1,7 @@
+extends: overloaded_base
+condition_name: "3DDA distilled (overloaded checkpoint)"
+distillation:
+  provider: openai
+  model: gpt-5.4-mini
+  max_tokens: 512
+  cache_dir: ${oc.env:LANGSTEER_DISTILL_CACHE,cache/overloaded_distillation}

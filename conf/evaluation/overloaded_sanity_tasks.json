@@ -1,0 +1,7 @@
+{
+  "tasks": [
+    "open_drawer", "move_slider_left", "lift_red_block_table",
+    "push_blue_block_right", "rotate_pink_block_left", "place_in_drawer",
+    "stack_block", "turn_on_lightbulb"
+  ]
+}

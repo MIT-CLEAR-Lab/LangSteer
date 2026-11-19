@@ -1,0 +1,166 @@
+import numpy as np
+from perception_utils import detect, blocks
+
+objects = ['red block', 'blue block', 'pink block']
+# Query: gripper.
+gripper = detect('gripper')
+ret_val = gripper
+
+objects = ['red block', 'blue block', 'pink block', 'drawer', 'slider']
+# Query: red block.
+red_block = detect('red block')
+ret_val = red_block
+
+objects = ['red block', 'blue block', 'pink block', 'drawer', 'slider']
+# Query: drawer handle.
+drawer_handle = detect('drawer_handle')
+ret_val = drawer_handle
+
+objects = ['red block', 'blue block', 'pink block', 'drawer', 'slider']
+# Query: table.
+table = detect('table')
+ret_val = table
+
+objects = ['red block', 'blue block', 'pink block', 'lightbulb', 'led']
+# Query: lightbulb.
+lightbulb = detect('lightbulb')
+ret_val = lightbulb
+
+objects = ['red block', 'blue block', 'pink block', 'slider']
+# Query: slider.
+slider = detect('slider')
+ret_val = slider
+
+objects = ['red block', 'blue block', 'pink block', 'button', 'led']
+# Query: button.
+button = detect('button')
+ret_val = button
+
+# ----------------------------------------------------------------------------
+# Which block an instruction means. These queries quote a whole instruction:
+#     the block meant in: <instruction>
+# Find the words that say which block, and return that block.
+# blocks(where) lists the blocks lying in one place: blocks('table'),
+# blocks('drawer'), blocks('cabinet') (the sliding cabinet), blocks('gripper');
+# blocks() lists every block, wherever it is. position[0] grows to the RIGHT,
+# position[1] grows toward the BACK (the front edge of the table, nearest the
+# robot, has the smallest value), position[2] grows UP. Reading the instruction:
+#   which blocks   Unless a place is named, the blocks on the table. A block
+#                  said to be in the drawer or the cabinet comes from that
+#                  list; the whole workspace / scene: every block. The drawer
+#                  (also called a compartment) is the only thing that is ever
+#                  open, shut or pulled out, so an unnamed thing in one of
+#                  those states is the drawer; the cabinet is never called
+#                  open or shut.
+#   the cabinet    Its sliding door stands where the 'slider_handle' is, in
+#                  front of one half. A block behind the door is the cabinet
+#                  block nearest the door along position[0]; a block in the
+#                  uncovered half is the one farthest from it.
+#   edges          Nearest the front edge of a place = smallest position[1]
+#                  there; the back edge = largest position[1]; the left edge
+#                  = smallest position[0]; the right edge = largest.
+#   held           The held block is blocks('gripper')[0]. If the instruction
+#                  speaks of a held block but that list is empty, nothing is
+#                  held: return the block that suits the action instead, as
+#                  when there is no description. Never return None.
+#   size           b.obb_size is a block's (width, depth, height). A size word
+#                  (largest, smallest) decides the block; a location said
+#                  along with it only describes that block.
+#   the camera     looks at the table from far away at the front right, so
+#                  nearer the camera means further to the front right.
+#   no description ("the block", "a block", "the object"): the block that suits
+#                  the action, as in the last four examples below.
+# Take the candidates, then pick one with min / max. Assign ret_val once, on the
+# last line.
+# ----------------------------------------------------------------------------
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block meant in: turn the block at the far left of the table clockwise.
+ret_val = min(blocks('table'), key=lambda b: b.position[0])
+
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block meant in: move the block that is farthest from you to the left.
+# No place is named: the blocks on the table. Farthest from the robot = farthest back.
+ret_val = max(blocks('table'), key=lambda b: b.position[1])
+
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block meant in: rotate the only block on the table to the right.
+ret_val = blocks('table')[0]
+
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block meant in: pick up the smallest block anywhere in the scene.
+ret_val = min(blocks(), key=lambda b: float(np.prod(b.obb_size)))
+
+objects = ['red block', 'blue block', 'pink block', 'drawer_interior']
+# Query: the block meant in: take out the block that sits deepest inside the drawer.
+ret_val = max(blocks('drawer'), key=lambda b: b.position[1])
+
+objects = ['red block', 'blue block', 'pink block', 'drawer_interior']
+# Query: the block meant in: grab the block on the left in whatever is pulled out.
+# Only the drawer is ever pulled out.
+ret_val = min(blocks('drawer'), key=lambda b: b.position[0])
+
+objects = ['red block', 'blue block', 'pink block', 'slider_handle', 'slider_interior']
+# Query: the block meant in: lift the block in the cabinet that the door is hiding.
+door = detect('slider_handle')
+ret_val = min(blocks('cabinet'), key=lambda b: abs(b.position[0] - door.position[0]))
+
+objects = ['red block', 'blue block', 'pink block', 'light_switch', 'table']
+# Query: the block meant in: slide the block nearest the light switch to the left.
+# Distance over the table plane only.
+light_switch = detect('light_switch')
+ret_val = min(blocks('table'), key=lambda b: np.linalg.norm(np.array(b.position[:2]) - np.array(light_switch.position[:2])))
+
+objects = ['red block', 'blue block', 'pink block', 'drawer_interior', 'table']
+# Query: the block meant in: knock a block off the table edge into the open drawer.
+# No description. A block that is pushed / slid / swept / knocked into the
+# drawer: the block on the table closest to the drawer.
+drawer_interior = detect('drawer_interior')
+ret_val = min(blocks('table'), key=lambda b: np.linalg.norm(np.array(b.position[:2]) - np.array(drawer_interior.position[:2])))
+
+objects = ['red block', 'blue block', 'pink block', 'drawer_interior', 'table']
+# Query: the block meant in: tip the block you are holding off the table into the drawer.
+# A held block is meant. With nothing held, the block that suits the action:
+# for a block going into the drawer, the block on the table closest to it.
+held = blocks('gripper')
+if held:
+    chosen = held[0]
+else:
+    drawer_interior = detect('drawer_interior')
+    chosen = min(blocks('table'), key=lambda b: np.linalg.norm(np.array(b.position[:2]) - np.array(drawer_interior.position[:2])))
+ret_val = chosen
+
+objects = ['red block', 'blue block', 'pink block']
+# Query: the block meant in: take the upper block off the pile.
+# No description. A block that is taken off another: the one with another block
+# directly underneath it (nearly the same x/y, roughly one block lower).
+candidates = blocks()
+top = candidates[0]
+for b in candidates:
+    for other in candidates:
+        same_column = np.linalg.norm(np.array(b.position[:2]) - np.array(other.position[:2])) <= cm2index(3, 'x')
+        if other.name != b.name and same_column and b.position[2] - other.position[2] >= cm2index(3, 'z'):
+            top = b
+ret_val = top
+
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block to pick up in: put one block on top of another.
+# No description. A block picked up to be stacked: the block on the table
+# closest to the gripper.
+gripper = detect('gripper')
+ret_val = min(blocks('table'), key=lambda b: np.linalg.norm(np.array(b.position) - np.array(gripper.position)))
+
+objects = ['red block', 'blue block', 'pink block', 'table']
+# Query: the block to stack onto in: put one block on top of another.
+# The block being stacked is the held one or, with nothing held, the one that
+# will be picked up. The block to stack onto is the other table block nearest it.
+gripper = detect('gripper')
+held = blocks('gripper')
+moving = held[0] if held else min(blocks('table'), key=lambda b: np.linalg.norm(np.array(b.position) - np.array(gripper.position)))
+others = [b for b in blocks('table') if b.name != moving.name]
+ret_val = min(others, key=lambda b: np.linalg.norm(np.array(b.position) - np.array(moving.position)))
+
+objects = ['red block', 'blue block', 'pink block', 'lightbulb', 'led']
+# Query: the light on the left.
+# The two lights are the 'lightbulb' and the 'led'.
+lights = [detect('lightbulb'), detect('led')]
+ret_val = min(lights, key=lambda o: o.position[0])

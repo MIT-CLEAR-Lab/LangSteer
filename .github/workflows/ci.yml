@@ -1,0 +1,62 @@
+# Continuous integration. Two environments, never mixed (see README "Setup"):
+#   cpu    - the main PyTorch environment from uv.lock: self-contained tests and lint.
+#   openpi - the separate OpenPI/JAX environment: the pi0.5 flow-guidance tests only.
+# No GPU, dataset, checkpoint or LLM key is available or needed: tests that need real
+# data are marked `data` and deselected; LLM calls are never made by the tests.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    name: tests + lint (main environment, CPU)
+    runs-on: ubuntu-22.04
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - name: Install from the lock file
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run --frozen ruff check .
+      - name: Self-contained tests
+        run: uv run --frozen pytest -m "not data" -ra
+
+  openpi:
+    # Needs an OpenPI checkout at the commit this repository targets,
+    # installed with OpenPI's own lock file. LangSteer is only put on PYTHONPATH:
+    # pi05_guidance/ imports OpenPI, JAX and NumPy, nothing from the main environment.
+    name: pi0.5 flow tests (OpenPI environment, CPU)
+    runs-on: ubuntu-22.04
+    env:
+      JAX_PLATFORMS: cpu
+      OPENPI_COMMIT: 15a9616a00943ada6c20a0f158e3adb39df2ccac
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: langsteer
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - name: Check out OpenPI
+        run: |
+          git clone https://github.com/Physical-Intelligence/openpi.git openpi
+          git -C openpi checkout --detach "$OPENPI_COMMIT"
+      - name: Install the OpenPI environment
+        working-directory: openpi
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: uv sync --frozen
+      - name: Flow-guidance tests
+        working-directory: langsteer
+        run: PYTHONPATH="$PWD" ../openpi/.venv/bin/python -m pytest tests/test_pi05_flow.py -ra

@@ -1,0 +1,171 @@
+[project]
+name = "langsteer"
+version = "0.1.0"
+description = "Language-conditioned steering of robot policies at inference time, evaluated on CALVIN"
+readme = "README.md"
+license = { text = "MIT" }
+# CPython 3.10 on Linux x86_64.
+requires-python = "==3.10.*"
+# Exact versions; uv.lock pins the full environment.
+dependencies = [
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "hydra-core==1.3.2",
+    "omegaconf==2.3.0",
+    "diffusers==0.36.0",
+    "transformers==5.2.0",
+    "einops==0.8.2",
+    "tqdm==4.67.3",
+    "anthropic==0.84.0",
+    "openai==2.27.0",
+    "blosc==1.11.4",
+    "wandb==0.25.1",
+    "pybullet==3.2.7",
+    "opencv-python==4.13.0.92",
+    "calvin-env",
+    "clip",
+    # pi0.5 websocket client (policies/pi05_guided.py); see [tool.uv] below for its numpy pin.
+    "openpi-client",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "ruff==0.15.0",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["core*", "envs*", "policies*", "steering*", "training*", "utils*", "voxposer*", "pi05_guidance*"]
+exclude = ["calvin*", "3d_diffuser_actor*", "conf*"]
+
+[tool.uv]
+# Supported platform: the one the results were produced on.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# openpi-client declares numpy<2 and dm-tree, but the client modules LangSteer imports
+# (websocket client, msgpack_numpy, image tools) run on the evaluated numpy 2.2.6 and do
+# not import dm-tree. These overrides replace the former `pip install --no-deps` step.
+override-dependencies = [
+    "numpy==2.2.6",
+    "dm-tree; sys_platform == 'never'",
+]
+# Pinned transitive versions.
+constraint-dependencies = [
+    "annotated-doc==0.0.4",
+    "annotated-types==0.7.0",
+    "antlr4-python3-runtime==4.9.3",
+    "anyio==4.12.1",
+    "certifi==2026.1.4",
+    "charset-normalizer==3.4.4",
+    "click==8.3.1",
+    "cloudpickle==3.1.2",
+    "colorlog==6.10.1",
+    "contourpy==1.3.2",
+    "cuda-bindings==12.9.4",
+    "cuda-pathfinder==1.3.4",
+    "cycler==0.12.1",
+    "distro==1.9.0",
+    "docstring-parser==0.17.0",
+    "exceptiongroup==1.3.1",
+    "filelock==3.21.0",
+    "fonttools==4.61.1",
+    "fsspec==2026.2.0",
+    "ftfy==6.3.1",
+    "gitdb==4.0.12",
+    "gitpython==3.1.46",
+    "gym==0.26.2",
+    "gym-notices==0.1.0",
+    "h11==0.16.0",
+    "hf-xet==1.2.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "huggingface-hub==1.4.1",
+    "hydra-colorlog==1.2.0",
+    "idna==3.11",
+    "importlib-metadata==6.11.0",
+    "iniconfig==2.3.0",
+    "jinja2==3.1.6",
+    "jiter==0.13.0",
+    "kiwisolver==1.4.9",
+    "llvmlite==0.46.0",
+    "markdown-it-py==4.0.0",
+    "markupsafe==3.0.3",
+    "matplotlib==3.10.8",
+    "mdurl==0.1.2",
+    "mpmath==1.3.0",
+    "msgpack==1.2.1",
+    "networkx==3.4.2",
+    "numba==0.63.1",
+    "numpy-quaternion==2024.0.13",
+    "nvidia-cublas-cu12==12.8.4.1",
+    "nvidia-cuda-cupti-cu12==12.8.90",
+    "nvidia-cuda-nvrtc-cu12==12.8.93",
+    "nvidia-cuda-runtime-cu12==12.8.90",
+    "nvidia-cudnn-cu12==9.10.2.21",
+    "nvidia-cufft-cu12==11.3.3.83",
+    "nvidia-cufile-cu12==1.13.1.3",
+    "nvidia-curand-cu12==10.3.9.90",
+    "nvidia-cusolver-cu12==11.7.3.90",
+    "nvidia-cusparse-cu12==12.5.8.93",
+    "nvidia-cusparselt-cu12==0.7.1",
+    "nvidia-nccl-cu12==2.27.5",
+    "nvidia-nvjitlink-cu12==12.8.93",
+    "nvidia-nvshmem-cu12==3.4.5",
+    "nvidia-nvtx-cu12==12.8.90",
+    "packaging==26.0",
+    "pandas==2.3.3",
+    "pillow==12.1.1",
+    "platformdirs==4.9.4",
+    "pluggy==1.6.0",
+    "protobuf==6.33.6",
+    "pydantic==2.12.5",
+    "pydantic-core==2.41.5",
+    "pygments==2.19.2",
+    "pyparsing==3.3.2",
+    "python-dateutil==2.9.0.post0",
+    "pytz==2025.2",
+    "pyyaml==6.0.3",
+    "regex==2026.1.15",
+    "requests==2.32.5",
+    "rich==14.3.2",
+    "safetensors==0.7.0",
+    "sentry-sdk==2.57.0",
+    "shellingham==1.5.4",
+    "six==1.17.0",
+    "smmap==5.0.2",
+    "sniffio==1.3.1",
+    "sympy==1.14.0",
+    "tokenizers==0.22.2",
+    "tomli==2.4.0",
+    "triton==3.6.0",
+    "typer==0.23.0",
+    "typer-slim==0.23.0",
+    "typing-extensions==4.15.0",
+    "typing-inspection==0.4.2",
+    "tzdata==2025.3",
+    "urllib3==2.6.3",
+    "wcwidth==0.6.0",
+    "websockets==16.1.1",
+    "zipp==3.23.0",
+]
+
+[tool.uv.sources]
+calvin-env = { git = "https://github.com/mees/calvin_env.git", rev = "797142c588c21e76717268b7b430958dbd13bf48" }
+clip = { git = "https://github.com/openai/CLIP.git", rev = "ded190a052fdf4585bd685cee5bc96e0310d2c93" }
+openpi-client = { git = "https://github.com/Physical-Intelligence/openpi.git", rev = "215abfb217dbac7d5f1273282331b9b1866c0479", subdirectory = "packages/openpi-client" }
+
+[tool.ruff.lint.per-file-ignores]
+# Entry points put the repository root on sys.path before importing from it.
+"scripts/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "data: needs the packaged CALVIN data, the real instruction artifacts or the CALVIN annotations (skipped when absent)",
+    "gpu: needs a CUDA device (skipped without one)",
+]

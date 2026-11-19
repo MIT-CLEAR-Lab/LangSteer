@@ -1,0 +1,417 @@
+import numpy as np
+from perception_utils import parse_query_obj, toward, away_from
+from plan_utils import get_affordance_map, get_avoidance_map
+
+# ============================================================================
+# COMPOSER
+# ============================================================================
+# Turn ONE instruction for a robot arm at a play table into 1-2 stages.
+#     (aff_fn, avoid_fn, mode, primitive, object)               # normal stage
+#     (aff_fn, avoid_fn, rot_target, mode, primitive, object)   # stage that also turns the wrist
+#   aff_fn      get_affordance_map('<where the gripper should go>')
+#   avoid_fn    get_avoidance_map('<where it must not go>'), or None
+#   mode        'track' when the target is an object's own centre (it follows the
+#               object); 'static' for every offset target ("N cm left of X").
+#   primitive   one of: grasp, push, pull, place, rotate
+#   object      one of: red_block, blue_block, pink_block, block, drawer_handle,
+#               slider_handle, led_button, lightbulb_switch
+# Stages run in order; the next starts when the gripper reaches the current target.
+# Directions are the robot's: left / right, in front of (toward the robot) /
+# behind (away from it), above / below.
+#
+# ============================================================================
+# THE SCENE: what is there and how each thing moves
+# ============================================================================
+#   blocks (red, blue, pink)   Graspable cubes. They are grasped and carried.
+#   drawer                     Also called cabinet drawer, or a compartment. Slides
+#                              front <-> back.
+#                              Its handle is GRASPED and
+#                              PULLED toward the front to open, and PUSHED toward
+#                              the back to close. Things go into the
+#                              'drawer interior'. It is the only thing here that
+#                              is ever open or shut (closed, pulled out, pushed
+#                              in): an instruction that speaks of something open
+#                              or shut without naming it means the drawer.
+#   sliding cabinet            Also called slider, sliding door, shelf, or just
+#                              "the cabinet" (but "cabinet drawer" is the drawer).
+#                              The door slides left <-> right when its
+#                              'slider handle' is PUSHED. The cabinet is never
+#                              called open or shut: the door covers one half and
+#                              leaves the other uncovered. Things go into that
+#                              half, written
+#                              'the uncovered side of the slider interior'.
+#   light switch               A lever for the yellow light (lightbulb, yellow
+#                              lamp). PUSHED up = on, PUSHED down = off, always
+#                              with two push stages, never a single press. A
+#                              short lever: drive only 7cm past it.
+#                              Object: lightbulb_switch.
+#   button                     PRESSED to toggle the green light (LED, indicator
+#                              light, lamp); the same press turns it on and off.
+#                              Object: led_button.
+# WHICH BLOCK. A colour in the instruction settles it. Every other block is
+# settled by RESOLVE FIRST (below), which asks the scene. A held block that is
+# being put somewhere needs no name: only its destination is named, and its
+# object is 'block'. An affordance query names a block by its colour and
+# nothing else.
+#
+# Plan only the motion the instruction asks for. Never add stages that first
+# open or close something.
+#
+# ============================================================================
+# THE FIVE MOTION PATTERNS: every plan is exactly one of these
+# ============================================================================
+# CARRY         A block ends up somewhere else (lift, pick up, move, push, slide,
+#               put, stack, take off). Stage 1: grasp at its centre (track).
+#               Stage 2 (static): the destination.
+#                 lift / pick up / take off .... 15cm above it       (grasp)
+#                 move / push / slide sideways . 15cm in that direction (place)
+#                   (a block is only ever moved LEFT or RIGHT, so a direction
+#                   given by a landmark is settled as left or right)
+#                 onto another block ........... 5cm above that block (place)
+#                 put / place / store into the
+#                 drawer or the cabinet ........ its interior         (place)
+#               A block that is in the drawer, or in / on the sliding cabinet
+#               (the shelf), is lifted with stage 1 alone.
+#               A block is never moved with push stages, except when the
+#               instruction says to push / slide / sweep / knock it INTO the
+#               drawer, however the drawer is named (see PUSH-THROUGH).
+# PULL          Opening the drawer. Stage 1: grasp the handle's centre (track).
+#               Stage 2: pull to a point 15cm along the motion (static).
+# PUSH-THROUGH  A door, a drawer being closed, the lever, or a block pushed / slid /
+#               swept into the drawer. Two push stages, both static, no grasp stage even if
+#               the instruction mentions grasping:
+#               Stage 1: a point 5cm from the object on the side OPPOSITE the motion.
+#               Stage 2: a point 12cm past the object ALONG the motion.
+# PRESS         The button. One push stage at the button (track).
+# TURN          Rotating a block. Stage 1: grasp at its centre (track). Stage 2:
+#               rotate at the SAME centre (track) with
+#               rot_target = rotation_about_axis('z', ANGLE)
+#               ANGLE = +90 for left (counter-clockwise from above), -90 for right.
+#               The target is the turn itself, relative to the wrist's pose now.
+#
+# The `# Held block: X` line that opens each query is reliable gripper state. It
+# matters in ONE case: the instruction asks to put the held thing somewhere (put /
+# place / store / stack "the object", "it", "the grasped block"). Then skip the
+# grasp stage of CARRY and emit only the place stage, with object 'block'. For
+# every other instruction, plan exactly as if nothing were held, with all of
+# the pattern's stages.
+#
+# ============================================================================
+# RESOLVE FIRST: what the instruction leaves to the scene
+# ============================================================================
+# Settle ONCE, at the top of the plan, whatever the instruction leaves to the
+# scene, by asking where things are. Then write the plan exactly as if the
+# instruction had named the colour, the light, and left or right.
+#   a block without a colour: ask which block the instruction means. `instruction`
+#   holds the instruction's text; never retype or shorten it.
+#       name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+#       obj = name.replace(' ', '_')          # name is e.g. 'red block', obj 'red_block'
+#     When one block goes onto another, ask for each:
+#       name = parse_query_obj(f'the block to pick up in: {instruction}').name.replace('_', ' ')
+#       base = parse_query_obj(f'the block to stack onto in: {instruction}').name.replace('_', ' ')
+#   a sideways direction given by a landmark
+#       side = toward(name, '<landmark>')     # "toward the <landmark>": 'left' or 'right'
+#       side = away_from(name, '<landmark>')  # "away from the <landmark>"
+#       side = toward(name, 'table')          # "inward": toward the middle of the table
+#     Always get the side from toward() / away_from(), never by guessing. The
+#     affordance queries then say "to the {side} of": never "toward", "away" or
+#     "inward". The side only replaces left / right: the motion pattern stays
+#     that of the object (a block is CARRIED, the door is pushed through).
+#   a light described only by where it is ("the light on the left")
+#       light = parse_query_obj('<description of the light>').name    # 'lightbulb' or 'led'
+#     then PUSH-THROUGH on the light switch for the lightbulb, PRESS for the led.
+#     A light the instruction does not identify at all ("it", "the light") is
+#     the yellow light: plan exactly as for "the yellow light".
+# The `# Held block` line outranks the instruction: if the instruction speaks of
+# a held block but the line says none, nothing is held, so resolve the block and
+# plan all the stages.
+#
+# A `# Scene state` block may follow the held-block line. It is a camera's guess
+# at the scene. Use its ambiguous_resolutions only for a word that names nothing
+# by itself ("it", "that one"). Never use it to choose a block or to override what
+# the instruction or RESOLVE FIRST already settles.
+# ============================================================================
+
+# Query: # Held block: none
+tug the drawer open.
+# PULL
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the drawer handle')
+stage2_aff = get_affordance_map('a point 15cm in front of the drawer handle')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'drawer_handle'),
+    (stage2_aff, None, 'static', 'pull', 'drawer_handle'),
+]
+
+# Query: # Held block: none
+take hold of the drawer handle and shut the drawer.
+# PUSH-THROUGH toward the back: start in front of the handle, end behind it.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point 5cm in front of the drawer handle')
+stage2_aff = get_affordance_map('a point 12cm behind the drawer handle')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', 'drawer_handle'),
+    (stage2_aff, None, 'static', 'push', 'drawer_handle'),
+]
+
+# Query: # Held block: none
+nudge the sliding panel over to the left.
+# PUSH-THROUGH to the left: start on the right of the handle, end on its left.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point 5cm to the right of the slider handle')
+stage2_aff = get_affordance_map('a point 12cm to the left of the slider handle')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', 'slider_handle'),
+    (stage2_aff, None, 'static', 'push', 'slider_handle'),
+]
+
+# Query: # Held block: blue_block
+make the yellow lamp go dark.
+# PUSH-THROUGH downward on the short lever: start above it, end below it. The
+# held block is irrelevant.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point 5cm above the light switch')
+stage2_aff = get_affordance_map('a point 7cm below the light switch')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', 'lightbulb_switch'),
+    (stage2_aff, None, 'static', 'push', 'lightbulb_switch'),
+]
+
+# Query: # Held block: none
+get the yellow lamp to light up.
+# PUSH-THROUGH upward on the short lever: start below it, end above it.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point 5cm below the light switch')
+stage2_aff = get_affordance_map('a point 7cm above the light switch')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', 'lightbulb_switch'),
+    (stage2_aff, None, 'static', 'push', 'lightbulb_switch'),
+]
+
+# Query: # Held block: none
+switch off the green lamp.
+# PRESS: the button toggles, so on and off are the same plan.
+movable = parse_query_obj('gripper')
+affordance_map = get_affordance_map('a point at the button')
+ret_val = [
+    (affordance_map, None, 'track', 'push', 'led_button'),
+]
+
+# Query: # Held block: none
+sweep the red brick over to the right.
+# CARRY sideways, even though the instruction says sweep.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the red block')
+stage2_aff = get_affordance_map('a point 15cm to the right of the red block')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'red_block'),
+    (stage2_aff, None, 'static', 'place', 'red_block'),
+]
+
+# Query: # Held block: none
+pick up the pink brick.
+# CARRY upward. No drawer or cabinet is mentioned, so both stages are needed.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the pink block')
+stage2_aff = get_affordance_map('a point 15cm above the pink block')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'pink_block'),
+    (stage2_aff, None, 'static', 'grasp', 'pink_block'),
+]
+
+# Query: # Held block: none
+take the blue brick that is lying on the shelf.
+# CARRY upward out of the cabinet: stage 1 alone.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the blue block')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'blue_block'),
+]
+
+# Query: # Held block: red_block
+twist the red brick to the left.
+# TURN left = +90. The held block is irrelevant.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the red block')
+stage2_aff = get_affordance_map('a point at the center of the red block')
+rot_target = rotation_about_axis('z', 90)
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'red_block'),
+    (stage2_aff, None, rot_target, 'track', 'rotate', 'red_block'),
+]
+
+# Query: # Held block: none
+twist the blue brick to the right.
+# TURN right = -90.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the blue block')
+stage2_aff = get_affordance_map('a point at the center of the blue block')
+rot_target = rotation_about_axis('z', -90)
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', 'blue_block'),
+    (stage2_aff, None, rot_target, 'track', 'rotate', 'blue_block'),
+]
+
+# Query: # Held block: red_block
+tuck it away inside the cabinet with the sliding door.
+# CARRY with the block already held: only the place stage.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the uncovered side of the slider interior')
+ret_val = [
+    (stage1_aff, None, 'static', 'place', 'block'),
+]
+
+# Query: # Held block: none
+pile one brick onto another.
+# RESOLVE FIRST both unnamed blocks. Then CARRY one onto the other.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block to pick up in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+base = parse_query_obj(f'the block to stack onto in: {instruction}').name.replace('_', ' ')
+stage1_aff = get_affordance_map(f'a point at the center of the {name}')
+stage2_aff = get_affordance_map(f'a point 5cm above the {base}')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', obj),
+    (stage2_aff, None, 'static', 'place', obj),
+]
+
+# Query: # Held block: pink_block
+pile one brick onto another.
+# The same instruction with a block already held: RESOLVE FIRST the block to
+# stack onto, then only the place stage.
+movable = parse_query_obj('gripper')
+base = parse_query_obj(f'the block to stack onto in: {instruction}').name.replace('_', ' ')
+stage1_aff = get_affordance_map(f'a point 5cm above the {base}')
+ret_val = [
+    (stage1_aff, None, 'static', 'place', 'block'),
+]
+
+# Query: # Held block: none
+remove the upper brick from the pile.
+# RESOLVE FIRST the unnamed block. Then CARRY upward.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+stage1_aff = get_affordance_map(f'a point at the center of the {name}')
+stage2_aff = get_affordance_map(f'a point 15cm above the {name}')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', obj),
+    (stage2_aff, None, 'static', 'grasp', obj),
+]
+
+# Query: # Held block: none
+knock a brick off the table edge into the open drawer.
+# RESOLVE FIRST the unnamed block. Then PUSH-THROUGH toward the front, over the
+# drawer's edge.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+stage1_aff = get_affordance_map(f'a point 5cm behind the {name}')
+stage2_aff = get_affordance_map(f'a point 12cm in front of the {name}')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', obj),
+    (stage2_aff, None, 'static', 'push', obj),
+]
+
+# Query: # Held block: blue_block
+put it away in the one that is standing open.
+# Only the drawer is ever open or shut. CARRY with the block already held.
+movable = parse_query_obj('gripper')
+stage1_aff = get_affordance_map('a point at the center of the drawer interior')
+ret_val = [
+    (stage1_aff, None, 'static', 'place', 'block'),
+]
+
+# Query: # Held block: blue_block
+give the block at the far left of the table a quarter turn clockwise.
+# RESOLVE FIRST which block; the held block is irrelevant. Then TURN; clockwise
+# seen from above is right = -90.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+stage1_aff = get_affordance_map(f'a point at the center of the {name}')
+stage2_aff = get_affordance_map(f'a point at the center of the {name}')
+rot_target = rotation_about_axis('z', -90)
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', obj),
+    (stage2_aff, None, rot_target, 'track', 'rotate', obj),
+]
+
+# Query: # Held block: none
+shove the block that is farthest from you over toward the light switch.
+# RESOLVE FIRST which block, and whether the landmark is to its left or right.
+# Then CARRY sideways.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+side = toward(name, 'light switch')
+stage1_aff = get_affordance_map(f'a point at the center of the {name}')
+stage2_aff = get_affordance_map(f'a point 15cm to the {side} of the {name}')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', obj),
+    (stage2_aff, None, 'static', 'place', obj),
+]
+
+# Query: # Held block: none
+slide the cabinet door away from the light switch.
+# RESOLVE FIRST the way the door must go. Then PUSH-THROUGH: start on the
+# opposite side, end along the motion.
+movable = parse_query_obj('gripper')
+motion = away_from('slider handle', 'light switch')      # the way the door must go
+opposite = 'left' if motion == 'right' else 'right'      # where the push starts
+stage1_aff = get_affordance_map(f'a point 5cm to the {opposite} of the slider handle')
+stage2_aff = get_affordance_map(f'a point 12cm to the {motion} of the slider handle')
+ret_val = [
+    (stage1_aff, None, 'static', 'push', 'slider_handle'),
+    (stage2_aff, None, 'static', 'push', 'slider_handle'),
+]
+
+# Query: # Held block: none
+take out the block that sits deepest inside the drawer.
+# RESOLVE FIRST which block. It is in the drawer, so CARRY upward is stage 1 alone.
+movable = parse_query_obj('gripper')
+name = parse_query_obj(f'the block meant in: {instruction}').name.replace('_', ' ')
+obj = name.replace(' ', '_')
+stage1_aff = get_affordance_map(f'a point at the center of the {name}')
+ret_val = [
+    (stage1_aff, None, 'track', 'grasp', obj),
+]
+
+# Query: # Held block: none
+turn on the light on the left.
+# RESOLVE FIRST which light. Then the usual pattern for that light.
+movable = parse_query_obj('gripper')
+light = parse_query_obj('the light on the left').name
+if 'led' in light:
+    # PRESS, the same for on and off.
+    affordance_map = get_affordance_map('a point at the button')
+    ret_val = [
+        (affordance_map, None, 'track', 'push', 'led_button'),
+    ]
+else:
+    # PUSH-THROUGH on the lever. This instruction says ON: start below, end above.
+    # (For OFF it would start 5cm above and end 7cm below.)
+    stage1_aff = get_affordance_map('a point 5cm below the light switch')
+    stage2_aff = get_affordance_map('a point 7cm above the light switch')
+    ret_val = [
+        (stage1_aff, None, 'static', 'push', 'lightbulb_switch'),
+        (stage2_aff, None, 'static', 'push', 'lightbulb_switch'),
+    ]
+
+# Query: # Held block: none
+# Scene state (from VLM grounding at episode start):
+# blocks_visible:
+#   red_block: 'table'
+#   blue_block: 'drawer_inside'
+#   pink_block: 'table'
+# ambiguous_resolutions:
+#   it: 'led'
+# slider_accessible_chamber: 'left'
+
+switch it off.
+# "it" names nothing by itself; the scene state says it is the green light. PRESS.
+movable = parse_query_obj('gripper')
+affordance_map = get_affordance_map('a point at the button')
+ret_val = [
+    (affordance_map, None, 'track', 'push', 'led_button'),
+]

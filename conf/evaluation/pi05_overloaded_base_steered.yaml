@@ -1,0 +1,7 @@
+extends: pi05_overloaded_base
+condition_name: "π0.5 base + steering (overloaded checkpoint)"
+steering: voxposer
+steering_overrides:
+  loop_back_on_last_stage: true
+  cache_dir: ${oc.env:LANGSTEER_STEERING_CACHE,cache/overloaded_steering}
+  device: cpu

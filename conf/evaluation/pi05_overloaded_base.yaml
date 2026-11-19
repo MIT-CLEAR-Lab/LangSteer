@@ -1,0 +1,6 @@
+extends: calvin_tasks
+condition_name: "π0.5 base (overloaded checkpoint)"
+policy_config: pi05_guided
+policy:
+  ckpt_path: ${oc.env:PI05_OVERLOADED_CHECKPOINT,checkpoints/pi05_calvin_overloaded/200000/COMPLETED.json}
+steering: none

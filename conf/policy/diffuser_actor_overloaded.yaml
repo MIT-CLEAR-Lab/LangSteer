@@ -1,0 +1,8 @@
+defaults:
+  - diffuser_actor
+  - _self_
+
+ckpt_path: ${oc.env:OVERLOADED_CHECKPOINT,checkpoints/overloaded/last.pth}
+# Match the prebuilt overloaded training embeddings, including CLIP padding.
+text_max_length: 53
+strict_checkpoint: true

@@ -1,0 +1,6 @@
+extends: overloaded_distilled
+condition_name: "3DDA distilled + steering (overloaded checkpoint)"
+steering: voxposer
+steering_overrides:
+  loop_back_on_last_stage: true
+  cache_dir: ${oc.env:LANGSTEER_STEERING_CACHE,cache/overloaded_steering}
